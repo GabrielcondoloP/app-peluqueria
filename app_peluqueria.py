@@ -7,19 +7,52 @@ from PIL import Image
 import io
 import base64
 
-# --- CONFIGURACIÓN DE PÁGINA (COLORES Y TÍTULO) ---
+# --- 1. CONFIGURACIÓN DE PÁGINA (SIEMPRE LO PRIMERO) ---
 st.set_page_config(page_title="Peluquería Canina", page_icon="🐾", layout="wide")
 
-# --- ESTILOS CSS PERSONALIZADOS (PARA QUE SE VEA MÁS BONITO) ---
+# Estilos CSS para mejorar la apariencia
 st.markdown("""
     <style>
     .stApp {background-color: #0e1117;}
-    .block-container {padding-top: 2rem;}
-    div[data-testid="stExpander"] div[role="button"] p {font-size: 1.2rem; font-weight: bold;}
+    div[data-testid="stExpander"] div[role="button"] p {font-size: 1.1rem; font-weight: bold;}
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNCIONES ---
+# --- 2. SISTEMA DE LOGIN (NATIVO Y ROBUSTO) ---
+def check_password():
+    """Retorna True si el usuario está logueado correctamente."""
+    
+    # Si no hay contraseña configurada en secrets, avisar
+    if "admin_password" not in st.secrets:
+        st.error("⚠️ Error: No has configurado 'admin_password' en los Secrets de Streamlit.")
+        st.stop()
+
+    def password_entered():
+        """Verifica la contraseña introducida."""
+        if st.session_state["password_input"] == st.secrets["admin_password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password_input"]  # Borrar por seguridad
+        else:
+            st.session_state["password_correct"] = False
+
+    # Si ya está logueado, devolver True
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Mostrar formulario de login
+    st.title("🔐 Acceso Peluquería")
+    st.text_input("Introduce la contraseña:", type="password", on_change=password_entered, key="password_input")
+    
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("❌ Contraseña incorrecta")
+
+    return False
+
+def cerrar_sesion():
+    st.session_state["password_correct"] = False
+    st.rerun()
+
+# --- 3. FUNCIONES DE GOOGLE SHEETS E IMÁGENES ---
 def conectar_google_sheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
@@ -29,171 +62,177 @@ def conectar_google_sheet():
         sheet = client.open("Gestion_Peluqueria").sheet1
         return sheet
     except Exception as e:
-        st.error(f"❌ Error de conexión: {e}")
+        st.error(f"❌ Error conectando con Google Drive: {e}")
         return None
 
-# Función para convertir foto subida a texto (Base64) para guardarla en Excel
 def imagen_a_base64(img_file):
+    """Convierte la imagen subida a texto para guardarla en Excel."""
     if img_file is None: return ""
-    # Abrimos la imagen y la reducimos para que no pese mucho en el Excel
-    image = Image.open(img_file)
-    image = image.convert('RGB')
-    image.thumbnail((400, 400)) # Reducir tamaño
-    buffered = io.BytesIO()
-    image.save(buffered, format="JPEG", quality=70)
-    return base64.b64encode(buffered.getvalue()).decode()
+    try:
+        image = Image.open(img_file).convert('RGB')
+        # Reducimos tamaño para no saturar la hoja de cálculo (max 400x400)
+        image.thumbnail((400, 400)) 
+        buffered = io.BytesIO()
+        image.save(buffered, format="JPEG", quality=70)
+        return base64.b64encode(buffered.getvalue()).decode()
+    except Exception as e:
+        st.error(f"Error procesando imagen: {e}")
+        return ""
 
-# Función para leer el texto del Excel y mostrarlo como foto
 def base64_a_imagen(base64_str):
+    """Convierte el texto del Excel de vuelta a imagen."""
     if not base64_str or len(str(base64_str)) < 10: return None
     try:
         return Image.open(io.BytesIO(base64.b64decode(base64_str)))
     except:
         return None
 
+# --- 4. APP PRINCIPAL ---
 def main():
-    st.title("🐾 Gestión de Peluquería Canina")
-    
+    # Bloqueo de seguridad: Si no hay login, se detiene aquí
+    if not check_password():
+        st.stop()
+
+    # Barra lateral con menú y logout
+    with st.sidebar:
+        st.title("🐶 Menú")
+        st.success("✅ Sesión Iniciada")
+        if st.button("Cerrar Sesión"):
+            cerrar_sesion()
+        st.divider()
+        st.info("Peluquería Canina v2.0")
+
+    # Título principal
+    st.title("🐾 Gestión de Peluquería")
+
+    # Conexión
     sheet = conectar_google_sheet()
     if not sheet: st.stop()
 
-    # --- MENÚ SUPERIOR ---
-    tabs = st.tabs(["🐶 Ver Fichas (Con Fotos)", "➕ Nuevo Cliente", "📊 Estadísticas"])
+    # Pestañas
+    tab1, tab2, tab3 = st.tabs(["📋 Ver Fichas", "➕ Nuevo Cliente", "📊 Estadísticas"])
 
-    # ==========================
-    # PESTAÑA 1: VISUALIZADOR TIPO APP
-    # ==========================
-    with tabs[0]:
-        st.header("Mis Clientes Peludos")
+    # --- PESTAÑA 1: VER FICHAS (CON TARJETAS Y FOTOS) ---
+    with tab1:
+        st.header("Listado de Clientes")
         
-        # Cargar datos
+        # Obtener datos
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
 
         if not df.empty:
-            # Buscador
-            busqueda = st.text_input("🔍 Buscar por Nombre, Raza o Teléfono:", placeholder="Escribe aquí...")
+            busqueda = st.text_input("🔍 Buscar perro, raza o teléfono:", placeholder="Escribe aquí...")
             
+            # Filtro inteligente
             if busqueda:
                 mask = df.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)
                 df_filtrado = df[mask]
             else:
                 df_filtrado = df
+            
+            st.caption(f"Mostrando {len(df_filtrado)} resultados")
 
-            st.caption(f"Mostrando {len(df_filtrado)} perros.")
-
-            # --- AQUÍ ESTÁ EL DISEÑO "BONITO" (GRID DE TARJETAS) ---
-            # Iteramos por cada perro y creamos una "tarjeta" visual
+            # Mostrar tarjetas
             for index, row in df_filtrado.iterrows():
-                # Creamos un contenedor con borde
                 with st.container(border=True):
-                    col_foto, col_info, col_acciones = st.columns([1, 3, 1])
+                    col_img, col_info = st.columns([1, 3])
                     
-                    # Columna 1: La Foto
-                    with col_foto:
-                        img = base64_a_imagen(row.get("Foto", ""))
+                    # Imagen
+                    with col_img:
+                        foto_str = row.get("Foto", "")
+                        img = base64_a_imagen(foto_str)
                         if img:
                             st.image(img, use_container_width=True)
                         else:
-                            # Si no tiene foto, mostramos un icono genérico
                             st.markdown("## 🐕")
-                            st.write("(Sin foto)")
+                            st.caption("Sin foto")
 
-                    # Columna 2: La Info Principal
+                    # Información
                     with col_info:
                         st.subheader(f"{row['Nombre']} ({row['Raza']})")
-                        st.markdown(f"**📞 Teléfono:** `{row['Telefono']}`")
-                        st.markdown(f"**✂️ Servicio:** {row['Servicio']} | **💰 Precio:** {row['Precio']}€")
+                        st.markdown(f"**📞 Tlf:** `{row['Telefono']}`")
+                        st.markdown(f"**✂️ Servicio:** {row['Servicio']} | **💶 Precio:** {row['Precio']}€")
                         
-                        # Usamos un desplegable para detalles menos importantes
-                        with st.expander("Ver observaciones y carácter"):
+                        with st.expander("📝 Ver observaciones y fecha"):
                             st.write(f"**Carácter:** {row['Caracter']}")
-                            st.info(f"📝 {row['Observaciones']}")
-                            st.caption(f"Última visita: {row['Fecha']}")
-
-                    # Columna 3: Botones
-                    with col_acciones:
-                        st.write("") # Espacio
-                        st.write("") 
-                        # Aquí podrías poner lógica para borrar (calculando el ID de fila real)
-                        st.button("✏️ Editar", key=f"btn_edit_{index}", disabled=True, help="Función en desarrollo")
-
+                            st.write(f"**Fecha última visita:** {row['Fecha']}")
+                            st.info(f"Observaciones: {row['Observaciones']}")
         else:
-            st.info("Aún no tienes clientes registrados.")
+            st.info("📭 La base de datos está vacía. Añade el primer perro en la siguiente pestaña.")
 
-    # ==========================
-    # PESTAÑA 2: NUEVO REGISTRO (CON FOTO)
-    # ==========================
-    with tabs[1]:
-        st.header("📸 Nuevo Registro")
-        with st.form("ficha_entry", clear_on_submit=True):
-            col1, col2 = st.columns(2)
+    # --- PESTAÑA 2: NUEVO PERRO ---
+    with tab2:
+        st.header("Registrar Nuevo Cliente")
+        with st.form("form_nuevo_perro", clear_on_submit=True):
+            c1, c2 = st.columns(2)
             
-            with col1:
-                nombre = st.text_input("Nombre*")
+            with c1:
+                nombre = st.text_input("Nombre del Perro *")
                 raza = st.text_input("Raza")
                 sexo = st.selectbox("Sexo", ["Macho", "Hembra"])
-                telefono = st.text_input("Teléfono")
-                
-                # CAMPO PARA SUBIR FOTO
-                foto_upload = st.file_uploader("Subir Foto del Perro", type=['jpg', 'png', 'jpeg'])
+                telefono = st.text_input("Teléfono Dueño")
+                foto_upload = st.file_uploader("📸 Subir Foto", type=['jpg', 'jpeg', 'png'])
 
-            with col2:
-                servicio = st.selectbox("Servicio", ["Corte", "Baño", "Corte+Baño", "Deslanado", "Uñas"])
+            with c2:
+                servicio = st.selectbox("Servicio", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"])
                 precio = st.number_input("Precio (€)", min_value=0.0, step=5.0)
-                fecha = st.date_input("Fecha", datetime.today())
-                caracter = st.text_input("Carácter")
-                obs = st.text_area("Observaciones")
+                fecha = st.date_input("Fecha Visita", datetime.today())
+                caracter = st.text_input("Carácter (Ej: Bueno, Miedoso)")
+                obs = st.text_area("Observaciones y Cuidados")
 
-            btn_guardar = st.form_submit_button("💾 GUARDAR FICHA COMPLETA")
+            btn_enviar = st.form_submit_button("💾 GUARDAR FICHA")
 
-            if btn_guardar:
+            if btn_enviar:
                 if not nombre:
-                    st.warning("El nombre es obligatorio.")
+                    st.warning("⚠️ El nombre es obligatorio")
                 else:
-                    with st.spinner("Guardando foto y datos..."):
-                        # Convertir foto a texto
-                        foto_str = imagen_a_base64(foto_upload)
+                    with st.spinner("Guardando en la nube..."):
+                        foto_base64 = imagen_a_base64(foto_upload)
                         
-                        fila = [
+                        # El orden debe coincidir con tus columnas de Excel:
+                        # Nombre, Raza, Sexo, Telefono, Servicio, Precio, Fecha, Caracter, Observaciones, Foto
+                        nueva_fila = [
                             nombre, raza, sexo, telefono, servicio, 
-                            precio, str(fecha), caracter, obs, foto_str
+                            precio, str(fecha), caracter, obs, foto_base64
                         ]
+                        
                         try:
-                            sheet.append_row(fila)
-                            st.success(f"¡{nombre} guardado con foto!")
+                            sheet.append_row(nueva_fila)
+                            st.success(f"✅ ¡{nombre} registrado con éxito!")
                             st.balloons()
                         except Exception as e:
-                            st.error(f"Error al guardar: {e}")
+                            st.error(f"Error guardando: {e}")
 
-    # ==========================
-    # PESTAÑA 3: ESTADÍSTICAS (ARREGLADO EL ERROR)
-    # ==========================
-    with tabs[2]:
-        data = sheet.get_all_records()
-        df = pd.DataFrame(data)
-        
-        if not df.empty:
-            # --- AQUÍ ESTÁ LA SOLUCIÓN A TU ERROR ---
-            # 1. Convertimos la columna Precio a números.
-            # 2. Si hay texto que no es número (ej: "20€"), lo convierte en NaN (vacío).
-            # 3. Luego rellenamos los vacíos con 0.
-            if "Precio" in df.columns:
-                df["Precio"] = pd.to_numeric(df["Precio"], errors='coerce').fillna(0)
-                total_ingresos = df["Precio"].sum()
-            else:
-                total_ingresos = 0
+    # --- PESTAÑA 3: ESTADÍSTICAS ---
+    with tab3:
+        st.header("Resumen del Negocio")
+        # Volvemos a pedir los datos para tenerlos actualizados
+        data_stats = sheet.get_all_records()
+        df_stats = pd.DataFrame(data_stats)
 
-            # Métricas grandes y bonitas
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Perros", len(df), delta="Clientes")
-            col2.metric("Ingresos Totales", f"{total_ingresos:,.2f} €", delta="Euros")
+        if not df_stats.empty:
+            c1, c2, c3 = st.columns(3)
             
-            # Gráfico simple de razas
-            st.subheader("Razas más frecuentes")
-            st.bar_chart(df["Raza"].value_counts())
-        else:
-            st.write("Sin datos aún.")
+            # 1. Total Perros
+            c1.metric("Total Clientes", len(df_stats))
+            
+            # 2. Total Dinero (Limpiando errores de texto)
+            if "Precio" in df_stats.columns:
+                # Convierte a números, si hay error pone 0
+                df_stats["Precio"] = pd.to_numeric(df_stats["Precio"], errors='coerce').fillna(0)
+                total_euros = df_stats["Precio"].sum()
+                c2.metric("Ingresos Totales", f"{total_euros:,.2f} €")
+            
+            # 3. Raza más común
+            if "Raza" in df_stats.columns:
+                top_raza = df_stats["Raza"].mode()
+                raza_txt = top_raza[0] if not top_raza.empty else "N/A"
+                c3.metric("Raza Frecuente", raza_txt)
+            
+            st.divider()
+            st.subheader("Servicios más solicitados")
+            if "Servicio" in df_stats.columns:
+                st.bar_chart(df_stats["Servicio"].value_counts())
 
 if __name__ == "__main__":
     main()
