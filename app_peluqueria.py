@@ -80,7 +80,7 @@ def main():
         st.title("🐶 Menú")
         if st.button("Cerrar Sesión"): cerrar_sesion()
         st.divider()
-        st.info("Sistema v5.0 (Gráficas + Fecha)")
+        st.info("Sistema v6.0 (Fechas ES)")
 
     st.title("🐾 Gestión de Peluquería")
     sheet = conectar_google_sheet()
@@ -92,7 +92,7 @@ def main():
     
     if not df.empty:
         df["_row_index"] = range(2, len(df) + 2)
-        # Limpieza previa de columnas clave
+        # Limpieza
         df["_etiqueta"] = df["Nombre"] + " (" + df["Raza"] + ") - 📞 " + df["Telefono"].astype(str)
         if "Precio" in df.columns:
             df["Precio"] = pd.to_numeric(df["Precio"], errors='coerce').fillna(0)
@@ -120,50 +120,49 @@ def main():
             st.caption(f"{len(df_filtrado)} fichas encontradas.")
 
             for index, row in df_filtrado.iterrows():
-                # Título del desplegable
-                titulo_expander = f"🐶 {row['Nombre']} ({row['Raza']}) - {row['Fecha']}"
-                
-                with st.expander(titulo_expander):
-                    # --- MODO LECTURA ---
+                with st.expander(f"🐶 {row['Nombre']} ({row['Raza']}) - {row['Fecha']}"):
                     c1, c2 = st.columns([1, 3])
                     with c1:
                         img = base64_a_imagen(row.get("Foto", ""))
                         if img: st.image(img, use_container_width=True)
                         else: st.write("🐕 Sin foto")
                     with c2:
-                        # --- CAMBIO AQUÍ: AÑADIDA FECHA AL INFO ---
                         st.info(f"📅 **{row['Fecha']}** | 💰 **{row['Precio']}€** | ✂️ **{row['Servicio']}**")
                         st.write(f"📞 **Tlf:** {row['Telefono']}")
                         st.write(f"**Obs:** {row['Observaciones']}")
                         st.write(f"**Carácter:** {row['Caracter']}")
                     
                     st.divider()
-                    
-                    # --- MODO EDICIÓN TOTAL ---
-                    st.write("✏️ **Editar Ficha Completa:**")
+                    st.write("✏️ **Editar Ficha:**")
                     with st.form(f"edit_full_{row['_row_index']}"):
                         col_e1, col_e2 = st.columns(2)
-                        
                         new_nom = col_e1.text_input("Nombre", row['Nombre'])
                         new_raz = col_e2.text_input("Raza", row['Raza'])
-                        
                         new_sex = col_e1.selectbox("Sexo", ["Macho", "Hembra"], index=0 if row['Sexo']=="Macho" else 1)
                         new_tel = col_e2.text_input("Teléfono", row['Telefono'])
-                        
                         new_srv = col_e1.selectbox("Servicio", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"], index=0)
                         new_pre = col_e2.number_input("Precio (€)", value=float(row['Precio']))
                         
+                        # --- ARREGLO DE FECHA EN EDICIÓN ---
+                        # Intentamos leer la fecha en formato ES (DD/MM/YYYY)
                         try:
-                            fecha_val = datetime.strptime(str(row['Fecha']), "%Y-%m-%d").date()
+                            fecha_val = datetime.strptime(str(row['Fecha']), "%d/%m/%Y").date()
                         except:
-                            fecha_val = datetime.today()
+                            try:
+                                # Por si acaso alguna se guardó en formato EN
+                                fecha_val = datetime.strptime(str(row['Fecha']), "%Y-%m-%d").date()
+                            except:
+                                fecha_val = datetime.today()
+
                         new_fec = col_e1.date_input("Fecha Visita", fecha_val)
-                        
                         new_car = col_e2.text_input("Carácter", row['Caracter'])
                         new_obs = st.text_area("Observaciones", row['Observaciones'])
                         
                         if st.form_submit_button("💾 Guardar Cambios"):
                             idx = row['_row_index']
+                            # --- ARREGLO AL GUARDAR (Forzamos formato DD/MM/YYYY) ---
+                            fecha_guardar = new_fec.strftime("%d/%m/%Y")
+                            
                             try:
                                 sheet.update_cell(idx, 1, new_nom)
                                 sheet.update_cell(idx, 2, new_raz)
@@ -171,7 +170,7 @@ def main():
                                 sheet.update_cell(idx, 4, new_tel)
                                 sheet.update_cell(idx, 5, new_srv)
                                 sheet.update_cell(idx, 6, new_pre)
-                                sheet.update_cell(idx, 7, str(new_fec))
+                                sheet.update_cell(idx, 7, fecha_guardar) # Guardamos fecha arreglada
                                 sheet.update_cell(idx, 8, new_car)
                                 sheet.update_cell(idx, 9, new_obs)
                                 st.success("✅ Actualizado.")
@@ -184,17 +183,15 @@ def main():
     # ==========================================
     with tab2:
         st.header("🔄 Registrar Visita a Cliente Habitual")
-        st.caption("Busca por nombre o teléfono.")
-
         if df.empty:
             st.warning("No hay clientes.")
         else:
             etiquetas_unicas = df["_etiqueta"].unique().tolist()
-            seleccion = st.selectbox("Selecciona al perro:", etiquetas_unicas, index=None, placeholder="Escribe 'Toby' o '666...'")
+            seleccion = st.selectbox("Selecciona al perro:", etiquetas_unicas, index=None, placeholder="Escribe...")
 
             if seleccion:
                 datos_perro = df[df["_etiqueta"] == seleccion].iloc[-1]
-                st.success(f"Seleccionado: **{datos_perro['Nombre']}**")
+                st.success(f"Cliente: **{datos_perro['Nombre']}**")
                 
                 with st.form("form_recurrente"):
                     c1, c2 = st.columns(2)
@@ -203,23 +200,24 @@ def main():
                         st.text_input("Raza", value=datos_perro['Raza'], disabled=True)
                         st.text_input("Teléfono", value=datos_perro['Telefono'], disabled=True)
                         foto_hidden = datos_perro.get('Foto', "")
-                    
                     with c2:
-                        st.markdown("### 📅 Datos de HOY")
                         servicio = st.selectbox("Servicio realizado", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"])
                         precio = st.number_input("Precio (€)", min_value=0.0, step=5.0)
                         fecha = st.date_input("Fecha", datetime.today())
                         obs = st.text_area("Observaciones de hoy", value=datos_perro['Observaciones'])
 
                     if st.form_submit_button("✅ CONFIRMAR VISITA"):
+                        # --- ARREGLO AL GUARDAR ---
+                        fecha_guardar = fecha.strftime("%d/%m/%Y")
+                        
                         nueva_fila = [
                             datos_perro['Nombre'], datos_perro['Raza'], datos_perro['Sexo'], 
-                            datos_perro['Telefono'], servicio, precio, str(fecha), 
+                            datos_perro['Telefono'], servicio, precio, fecha_guardar, 
                             datos_perro['Caracter'], obs, foto_hidden
                         ]
                         try:
                             sheet.append_row(nueva_fila)
-                            st.success(f"Visita de {datos_perro['Nombre']} registrada.")
+                            st.success(f"Visita registrada.")
                             st.balloons()
                         except: st.error("Error al guardar.")
 
@@ -246,7 +244,10 @@ def main():
             if st.form_submit_button("Guardar Nuevo Cliente"):
                 if nom:
                     ft = imagen_a_base64(foto)
-                    row = [nom, raz, sex, tel, srv, pre, str(fec), car, obs, ft]
+                    # --- ARREGLO AL GUARDAR ---
+                    fecha_guardar = fec.strftime("%d/%m/%Y")
+                    
+                    row = [nom, raz, sex, tel, srv, pre, fecha_guardar, car, obs, ft]
                     sheet.append_row(row)
                     st.success("Cliente creado!")
                 else: st.warning("Nombre obligatorio")
@@ -258,30 +259,31 @@ def main():
         st.header("📈 Finanzas y Evolución")
         
         if not df.empty:
-            # MÉTRICAS RÁPIDAS
             col1, col2, col3 = st.columns(3)
             col1.metric("Ingresos Totales", f"{df['Precio'].sum():,.2f} €")
             col2.metric("Total Visitas", len(df))
             
-            # CÁLCULO PARA EL GRÁFICO DE LÍNEA (EVOLUCIÓN MENSUAL)
-            # 1. Convertimos la columna Fecha a formato fecha real
-            df["Fecha_dt"] = pd.to_datetime(df["Fecha"], format="%Y-%m-%d", errors='coerce')
+            # --- ARREGLO EN GRÁFICAS (LEER FORMATO ES) ---
+            # 'dayfirst=True' es la clave para que entienda DD/MM/YYYY
+            df["Fecha_dt"] = pd.to_datetime(df["Fecha"], dayfirst=True, errors='coerce')
             
-            # 2. Creamos columna "Mes-Año" (Ej: 2024-02) para agrupar
-            # Eliminamos filas con fecha errónea
+            # Filtramos fechas que no se hayan podido leer
             df_chart = df.dropna(subset=["Fecha_dt"]).copy()
-            df_chart["Mes"] = df_chart["Fecha_dt"].dt.strftime("%Y-%m")
             
-            # 3. Agrupamos y sumamos dinero
-            ingresos_mensuales = df_chart.groupby("Mes")["Precio"].sum()
-            
-            # GRÁFICO 1: EVOLUCIÓN (Línea)
-            st.subheader("💰 Evolución de Ingresos (Mes a Mes)")
-            st.line_chart(ingresos_mensuales)
+            if not df_chart.empty:
+                # Ordenar por fecha para que la gráfica salga en orden cronológico
+                df_chart = df_chart.sort_values("Fecha_dt")
+                
+                # Agrupar por Mes
+                df_chart["Mes"] = df_chart["Fecha_dt"].dt.strftime("%Y-%m")
+                ingresos_mensuales = df_chart.groupby("Mes")["Precio"].sum()
+                
+                st.subheader("💰 Evolución de Ingresos (Mes a Mes)")
+                st.line_chart(ingresos_mensuales)
+            else:
+                st.warning("No se pudieron leer las fechas correctamente para la gráfica.")
             
             st.divider()
-
-            # GRÁFICO 2: SERVICIOS (Barras)
             st.subheader("📊 Servicios más vendidos")
             st.bar_chart(df["Servicio"].value_counts())
         else:
