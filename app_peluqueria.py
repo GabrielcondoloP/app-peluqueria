@@ -17,7 +17,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGIN ---
+# --- 2. LOGIN SIMPLE ---
 def check_password():
     if "admin_password" not in st.secrets:
         st.error("⚠️ Error: Configura 'admin_password' en los Secrets.")
@@ -80,7 +80,7 @@ def main():
         st.title("🐶 Menú")
         if st.button("Cerrar Sesión"): cerrar_sesion()
         st.divider()
-        st.info("Sistema v4.0 (Selector Inteligente)")
+        st.info("Sistema v5.0 (Gráficas + Fecha)")
 
     st.title("🐾 Gestión de Peluquería")
     sheet = conectar_google_sheet()
@@ -90,22 +90,21 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
-    # Índice de filas para poder editar (Empieza en 2 porque Excel tiene cabecera)
     if not df.empty:
         df["_row_index"] = range(2, len(df) + 2)
-        # --- TRUCO DEL SELECTOR INTELIGENTE ---
-        # Creamos una columna "Etiqueta" que combina Nombre + Raza + Telefono
-        # Así al buscar "Toby" salen todos los Tobys diferenciados
+        # Limpieza previa de columnas clave
         df["_etiqueta"] = df["Nombre"] + " (" + df["Raza"] + ") - 📞 " + df["Telefono"].astype(str)
+        if "Precio" in df.columns:
+            df["Precio"] = pd.to_numeric(df["Precio"], errors='coerce').fillna(0)
 
     # PESTAÑAS
-    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Buscar y Editar", "🔄 Nueva Visita (Cliente)", "➕ Nuevo (Primerizo)", "📊 Caja"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Buscar y Editar", "🔄 Nueva Visita (Cliente)", "➕ Nuevo (Primerizo)", "📊 Caja y Gráficas"])
 
     # ==========================================
-    # PESTAÑA 1: BUSCAR Y EDITAR TODO
+    # PESTAÑA 1: BUSCAR Y EDITAR
     # ==========================================
     with tab1:
-        st.header("Base de Datos (Edición Completa)")
+        st.header("Historial de Visitas")
         
         if df.empty:
             st.info("No hay datos.")
@@ -132,7 +131,9 @@ def main():
                         if img: st.image(img, use_container_width=True)
                         else: st.write("🐕 Sin foto")
                     with c2:
-                        st.info(f"📞 **{row['Telefono']}** | 💰 **{row['Precio']}€** | ✂️ **{row['Servicio']}**")
+                        # --- CAMBIO AQUÍ: AÑADIDA FECHA AL INFO ---
+                        st.info(f"📅 **{row['Fecha']}** | 💰 **{row['Precio']}€** | ✂️ **{row['Servicio']}**")
+                        st.write(f"📞 **Tlf:** {row['Telefono']}")
                         st.write(f"**Obs:** {row['Observaciones']}")
                         st.write(f"**Carácter:** {row['Caracter']}")
                     
@@ -143,17 +144,15 @@ def main():
                     with st.form(f"edit_full_{row['_row_index']}"):
                         col_e1, col_e2 = st.columns(2)
                         
-                        # Precargamos los valores actuales
                         new_nom = col_e1.text_input("Nombre", row['Nombre'])
                         new_raz = col_e2.text_input("Raza", row['Raza'])
                         
                         new_sex = col_e1.selectbox("Sexo", ["Macho", "Hembra"], index=0 if row['Sexo']=="Macho" else 1)
                         new_tel = col_e2.text_input("Teléfono", row['Telefono'])
                         
-                        new_srv = col_e1.selectbox("Servicio", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"], index=0) # Index 0 por defecto, mejorar si coincide
-                        new_pre = col_e2.number_input("Precio (€)", value=float(row['Precio']) if row['Precio']!='' else 0.0)
+                        new_srv = col_e1.selectbox("Servicio", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"], index=0)
+                        new_pre = col_e2.number_input("Precio (€)", value=float(row['Precio']))
                         
-                        # Fecha complicada: intentamos convertirla, si falla ponemos hoy
                         try:
                             fecha_val = datetime.strptime(str(row['Fecha']), "%Y-%m-%d").date()
                         except:
@@ -165,8 +164,6 @@ def main():
                         
                         if st.form_submit_button("💾 Guardar Cambios"):
                             idx = row['_row_index']
-                            # Actualizamos celda a celda (Columnas 1 a 9)
-                            # Orden: Nombre(1), Raza(2), Sexo(3), Tlf(4), Servicio(5), Precio(6), Fecha(7), Caracter(8), Obs(9)
                             try:
                                 sheet.update_cell(idx, 1, new_nom)
                                 sheet.update_cell(idx, 2, new_raz)
@@ -177,83 +174,67 @@ def main():
                                 sheet.update_cell(idx, 7, str(new_fec))
                                 sheet.update_cell(idx, 8, new_car)
                                 sheet.update_cell(idx, 9, new_obs)
-                                st.success("✅ Ficha actualizada correctamente.")
+                                st.success("✅ Actualizado.")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Error actualizando: {e}")
+                                st.error(f"Error: {e}")
 
     # ==========================================
-    # PESTAÑA 2: NUEVA VISITA (SELECTOR INTELIGENTE)
+    # PESTAÑA 2: NUEVA VISITA
     # ==========================================
     with tab2:
         st.header("🔄 Registrar Visita a Cliente Habitual")
-        st.caption("Busca por nombre o teléfono. El sistema diferencia si hay varios 'Tobys'.")
+        st.caption("Busca por nombre o teléfono.")
 
         if df.empty:
-            st.warning("No hay clientes registrados.")
+            st.warning("No hay clientes.")
         else:
-            # --- AQUÍ ESTÁ LA MAGIA ---
-            # Usamos la columna "_etiqueta" que creamos al principio (Nombre + Raza + Tlf)
-            # Streamlit permite escribir en este cuadro para filtrar
             etiquetas_unicas = df["_etiqueta"].unique().tolist()
             seleccion = st.selectbox("Selecciona al perro:", etiquetas_unicas, index=None, placeholder="Escribe 'Toby' o '666...'")
 
             if seleccion:
-                # Recuperamos los datos originales buscando por esa etiqueta exacta
                 datos_perro = df[df["_etiqueta"] == seleccion].iloc[-1]
-                
-                st.success(f"Has seleccionado a: **{datos_perro['Nombre']}** (Dueño tlf: {datos_perro['Telefono']})")
+                st.success(f"Seleccionado: **{datos_perro['Nombre']}**")
                 
                 with st.form("form_recurrente"):
                     c1, c2 = st.columns(2)
                     with c1:
-                        # Mostramos datos fijos (Deshabilitados para no liarla, o editables si quieres)
                         st.text_input("Nombre", value=datos_perro['Nombre'], disabled=True)
                         st.text_input("Raza", value=datos_perro['Raza'], disabled=True)
                         st.text_input("Teléfono", value=datos_perro['Telefono'], disabled=True)
-                        # Foto oculta
                         foto_hidden = datos_perro.get('Foto', "")
                     
                     with c2:
-                        st.markdown("### 📅 Datos de la Visita de HOY")
+                        st.markdown("### 📅 Datos de HOY")
                         servicio = st.selectbox("Servicio realizado", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"])
                         precio = st.number_input("Precio (€)", min_value=0.0, step=5.0)
                         fecha = st.date_input("Fecha", datetime.today())
-                        obs = st.text_area("Observaciones de hoy", value=datos_perro['Observaciones']) # Sugiere las anteriores
+                        obs = st.text_area("Observaciones de hoy", value=datos_perro['Observaciones'])
 
                     if st.form_submit_button("✅ CONFIRMAR VISITA"):
-                        # Creamos fila nueva reciclando datos viejos + los de hoy
                         nueva_fila = [
-                            datos_perro['Nombre'], 
-                            datos_perro['Raza'], 
-                            datos_perro['Sexo'], 
-                            datos_perro['Telefono'], 
-                            servicio, 
-                            precio, 
-                            str(fecha), 
-                            datos_perro['Caracter'], 
-                            obs, 
-                            foto_hidden
+                            datos_perro['Nombre'], datos_perro['Raza'], datos_perro['Sexo'], 
+                            datos_perro['Telefono'], servicio, precio, str(fecha), 
+                            datos_perro['Caracter'], obs, foto_hidden
                         ]
                         try:
                             sheet.append_row(nueva_fila)
-                            st.success(f"Visita de {datos_perro['Nombre']} registrada en el historial.")
+                            st.success(f"Visita de {datos_perro['Nombre']} registrada.")
                             st.balloons()
-                        except:
-                            st.error("Error al guardar.")
+                        except: st.error("Error al guardar.")
 
     # ==========================================
     # PESTAÑA 3: NUEVO (PRIMERIZO)
     # ==========================================
     with tab3:
-        st.header("🆕 Primer Registro (Perro Nuevo)")
+        st.header("🆕 Primer Registro")
         with st.form("form_nuevo", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
                 nom = st.text_input("Nombre *")
                 raz = st.text_input("Raza")
                 sex = st.selectbox("Sexo", ["Macho", "Hembra"])
-                tel = st.text_input("Teléfono (Importante)")
+                tel = st.text_input("Teléfono")
                 foto = st.file_uploader("Foto", type=['jpg','png'])
             with c2:
                 srv = st.selectbox("Servicio", ["Corte", "Baño", "Completo", "Otro"])
@@ -268,18 +249,43 @@ def main():
                     row = [nom, raz, sex, tel, srv, pre, str(fec), car, obs, ft]
                     sheet.append_row(row)
                     st.success("Cliente creado!")
-                else:
-                    st.warning("El nombre es obligatorio")
+                else: st.warning("Nombre obligatorio")
 
     # ==========================================
-    # PESTAÑA 4: CAJA
+    # PESTAÑA 4: ESTADÍSTICAS Y GRÁFICAS
     # ==========================================
     with tab4:
-        st.header("📊 Finanzas")
-        if not df.empty and "Precio" in df.columns:
-            df["Precio"] = pd.to_numeric(df["Precio"], errors='coerce').fillna(0)
-            st.metric("Total Facturado (Histórico)", f"{df['Precio'].sum():,.2f} €")
+        st.header("📈 Finanzas y Evolución")
+        
+        if not df.empty:
+            # MÉTRICAS RÁPIDAS
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Ingresos Totales", f"{df['Precio'].sum():,.2f} €")
+            col2.metric("Total Visitas", len(df))
+            
+            # CÁLCULO PARA EL GRÁFICO DE LÍNEA (EVOLUCIÓN MENSUAL)
+            # 1. Convertimos la columna Fecha a formato fecha real
+            df["Fecha_dt"] = pd.to_datetime(df["Fecha"], format="%Y-%m-%d", errors='coerce')
+            
+            # 2. Creamos columna "Mes-Año" (Ej: 2024-02) para agrupar
+            # Eliminamos filas con fecha errónea
+            df_chart = df.dropna(subset=["Fecha_dt"]).copy()
+            df_chart["Mes"] = df_chart["Fecha_dt"].dt.strftime("%Y-%m")
+            
+            # 3. Agrupamos y sumamos dinero
+            ingresos_mensuales = df_chart.groupby("Mes")["Precio"].sum()
+            
+            # GRÁFICO 1: EVOLUCIÓN (Línea)
+            st.subheader("💰 Evolución de Ingresos (Mes a Mes)")
+            st.line_chart(ingresos_mensuales)
+            
+            st.divider()
+
+            # GRÁFICO 2: SERVICIOS (Barras)
+            st.subheader("📊 Servicios más vendidos")
             st.bar_chart(df["Servicio"].value_counts())
+        else:
+            st.info("Necesitas datos para ver las gráficas.")
 
 if __name__ == "__main__":
     main()
