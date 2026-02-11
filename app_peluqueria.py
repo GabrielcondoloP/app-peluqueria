@@ -80,7 +80,7 @@ def main():
         st.title("🐶 Menú")
         if st.button("Cerrar Sesión"): cerrar_sesion()
         st.divider()
-        st.info("Sistema v6.0 (Fechas ES)")
+        st.info("Sistema v7.0 (Fechas ES Visual)")
 
     st.title("🐾 Gestión de Peluquería")
     sheet = conectar_google_sheet()
@@ -143,25 +143,26 @@ def main():
                         new_srv = col_e1.selectbox("Servicio", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"], index=0)
                         new_pre = col_e2.number_input("Precio (€)", value=float(row['Precio']))
                         
-                        # --- ARREGLO DE FECHA EN EDICIÓN ---
-                        # Intentamos leer la fecha en formato ES (DD/MM/YYYY)
+                        # --- FECHA EN FORMATO ESPAÑOL ---
                         try:
+                            # Intenta leer DD/MM/YYYY
                             fecha_val = datetime.strptime(str(row['Fecha']), "%d/%m/%Y").date()
                         except:
                             try:
-                                # Por si acaso alguna se guardó en formato EN
+                                # Intenta leer YYYY-MM-DD
                                 fecha_val = datetime.strptime(str(row['Fecha']), "%Y-%m-%d").date()
                             except:
                                 fecha_val = datetime.today()
 
-                        new_fec = col_e1.date_input("Fecha Visita", fecha_val)
+                        # AQUÍ ESTÁ EL CAMBIO VISUAL: format="DD/MM/YYYY"
+                        new_fec = col_e1.date_input("Fecha Visita", fecha_val, format="DD/MM/YYYY")
+                        
                         new_car = col_e2.text_input("Carácter", row['Caracter'])
                         new_obs = st.text_area("Observaciones", row['Observaciones'])
                         
                         if st.form_submit_button("💾 Guardar Cambios"):
                             idx = row['_row_index']
-                            # --- ARREGLO AL GUARDAR (Forzamos formato DD/MM/YYYY) ---
-                            fecha_guardar = new_fec.strftime("%d/%m/%Y")
+                            fecha_guardar = new_fec.strftime("%d/%m/%Y") # Guardamos como DD/MM/YYYY
                             
                             try:
                                 sheet.update_cell(idx, 1, new_nom)
@@ -170,7 +171,7 @@ def main():
                                 sheet.update_cell(idx, 4, new_tel)
                                 sheet.update_cell(idx, 5, new_srv)
                                 sheet.update_cell(idx, 6, new_pre)
-                                sheet.update_cell(idx, 7, fecha_guardar) # Guardamos fecha arreglada
+                                sheet.update_cell(idx, 7, fecha_guardar)
                                 sheet.update_cell(idx, 8, new_car)
                                 sheet.update_cell(idx, 9, new_obs)
                                 st.success("✅ Actualizado.")
@@ -203,13 +204,14 @@ def main():
                     with c2:
                         servicio = st.selectbox("Servicio realizado", ["Corte", "Baño", "Corte + Baño", "Deslanado", "Solo Uñas", "Otro"])
                         precio = st.number_input("Precio (€)", min_value=0.0, step=5.0)
-                        fecha = st.date_input("Fecha", datetime.today())
+                        
+                        # CAMBIO VISUAL AQUÍ
+                        fecha = st.date_input("Fecha", datetime.today(), format="DD/MM/YYYY")
+                        
                         obs = st.text_area("Observaciones de hoy", value=datos_perro['Observaciones'])
 
                     if st.form_submit_button("✅ CONFIRMAR VISITA"):
-                        # --- ARREGLO AL GUARDAR ---
                         fecha_guardar = fecha.strftime("%d/%m/%Y")
-                        
                         nueva_fila = [
                             datos_perro['Nombre'], datos_perro['Raza'], datos_perro['Sexo'], 
                             datos_perro['Telefono'], servicio, precio, fecha_guardar, 
@@ -237,14 +239,16 @@ def main():
             with c2:
                 srv = st.selectbox("Servicio", ["Corte", "Baño", "Completo", "Otro"])
                 pre = st.number_input("Precio", step=5.0)
-                fec = st.date_input("Fecha", datetime.today())
+                
+                # CAMBIO VISUAL AQUÍ
+                fec = st.date_input("Fecha", datetime.today(), format="DD/MM/YYYY")
+                
                 car = st.text_input("Carácter")
                 obs = st.text_area("Observaciones")
             
             if st.form_submit_button("Guardar Nuevo Cliente"):
                 if nom:
                     ft = imagen_a_base64(foto)
-                    # --- ARREGLO AL GUARDAR ---
                     fecha_guardar = fec.strftime("%d/%m/%Y")
                     
                     row = [nom, raz, sex, tel, srv, pre, fecha_guardar, car, obs, ft]
@@ -263,25 +267,20 @@ def main():
             col1.metric("Ingresos Totales", f"{df['Precio'].sum():,.2f} €")
             col2.metric("Total Visitas", len(df))
             
-            # --- ARREGLO EN GRÁFICAS (LEER FORMATO ES) ---
-            # 'dayfirst=True' es la clave para que entienda DD/MM/YYYY
+            # PROCESAMIENTO INTELIGENTE DE FECHAS (FORMATO ES)
             df["Fecha_dt"] = pd.to_datetime(df["Fecha"], dayfirst=True, errors='coerce')
             
-            # Filtramos fechas que no se hayan podido leer
             df_chart = df.dropna(subset=["Fecha_dt"]).copy()
             
             if not df_chart.empty:
-                # Ordenar por fecha para que la gráfica salga en orden cronológico
                 df_chart = df_chart.sort_values("Fecha_dt")
-                
-                # Agrupar por Mes
                 df_chart["Mes"] = df_chart["Fecha_dt"].dt.strftime("%Y-%m")
                 ingresos_mensuales = df_chart.groupby("Mes")["Precio"].sum()
                 
                 st.subheader("💰 Evolución de Ingresos (Mes a Mes)")
                 st.line_chart(ingresos_mensuales)
             else:
-                st.warning("No se pudieron leer las fechas correctamente para la gráfica.")
+                st.warning("No se pudieron leer las fechas para la gráfica.")
             
             st.divider()
             st.subheader("📊 Servicios más vendidos")
